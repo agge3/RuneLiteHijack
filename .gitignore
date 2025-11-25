@@ -72,3 +72,5 @@ nb-configuration.xml
 *.sh
 
 plugins
+
+release/

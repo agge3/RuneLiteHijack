@@ -12,7 +12,7 @@ import javax.swing.UIManager;
  * @since Nov 07, 2020
  */
 public class LauncherHijack{
-	
+
 	public LauncherHijack(){
 		new Thread(()->{
 			// First we need to grab the ClassLoader the launcher uses to launch the client.
@@ -36,11 +36,11 @@ public class LauncherHijack{
 			System.out.println("Classloader found");
 			try{
 				URLClassLoader classLoader = (URLClassLoader) objClassLoader;
-				
+
 				// Add our hijack client to the classloader
 				Method addUrl = URLClassLoader.class.getDeclaredMethod("addURL", URL.class);
 				addUrl.setAccessible(true);
-				
+
 				URI uri = LauncherHijack.class.getProtectionDomain().getCodeSource().getLocation().toURI();
 				if(uri.getPath().endsWith("classes/")){// Intellij
 					uri = uri.resolve("..");
@@ -50,7 +50,7 @@ public class LauncherHijack{
 				}
 				addUrl.invoke(classLoader, uri.toURL());
 				System.out.println(uri.getPath());
-				
+
 				// Execute our code inside the runelite client classloader
 				Class<?> clazz = classLoader.loadClass(ClientHijack.class.getName());
 				clazz.getConstructor().newInstance();
@@ -59,7 +59,7 @@ public class LauncherHijack{
 			}
 		}).start();
 	}
-	
+
 	public static void main(String[] args){
 		// Force disable the "JVMLauncher", was just easiest way to do what I wanted at the time.
 		System.setProperty("runelite.launcher.nojvm", "true");

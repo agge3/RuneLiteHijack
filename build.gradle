@@ -1,0 +1,58 @@
+plugins {
+    id 'java'
+	id 'com.gradleup.shadow' version '9.1.0'
+}
+
+java {
+	sourceCompatibility = JavaVersion.VERSION_11
+	targetCompatibility = JavaVersion.VERSION_11
+	toolchain {
+		// xxx use system unless errors occur
+		//languageVersion = JavaLanguageVersion.of(11)
+	}
+}
+
+repositories {
+    mavenLocal()
+    maven {
+        url = 'https://repo.runelite.net'
+    }
+    mavenCentral()
+}
+
+def runeLiteVersion = '1.12.6'
+
+dependencies {
+    compileOnly group: 'net.runelite', name: 'client', version: runeLiteVersion
+    testImplementation group: 'net.runelite', name: 'client', version: runeLiteVersion
+    testImplementation group: 'net.runelite', name: 'jshell', version: runeLiteVersion
+
+    compileOnly 'org.projectlombok:lombok:1.18.20'
+    annotationProcessor 'org.projectlombok:lombok:1.18.20'
+
+    testImplementation 'junit:junit:4.13.2'
+}
+
+group = 'com.aggeplugins'
+version = '1.0.0'
+
+// utf-8 encoding
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = 'UTF-8'
+}
+
+tasks {
+	shadowJar {
+		archiveBaseName = 'runelite-hijack'
+		archiveClassifier = ''
+
+		mergeServiceFiles()
+
+		doLast {
+			copy {
+				from(archiveFile)
+				into("${rootProject.rootDir}/release")
+			}
+		}
+	}
+}
