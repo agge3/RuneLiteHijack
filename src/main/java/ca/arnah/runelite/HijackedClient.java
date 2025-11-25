@@ -64,6 +64,7 @@ public class HijackedClient {
 	}
 
 	private List<Class<?>> loadUrls(List<Path> jarPaths) {
+		// classes is plugins classes for pluginManager to load
 		List<Class<?>> classes = new ArrayList<>();
 
 		try {
@@ -80,23 +81,30 @@ public class HijackedClient {
 				} catch (Exception e) {
 					log.warn("FAIL: parse jar: {}", jarPath);
 				}
-				log.info("SUCCESS: parsed jar: {}", jarPath);
+				//log.info("SUCCESS: parsed jar: {}", jarPath);
 			}
 
+			// XXX RESOURCE LEAK: implements Closeable, so should be CLOSED
+			// XXX OK for our use cases, because hijack should live life of JVM
+			// XXX HANDLE CLEANER with cleanup!!!
 			ClassLoader loader = new URLClassLoader(urls.toArray(new URL[0]), getClass().getClassLoader());
 			for (ClassByte cb : cbs) {
-				log.info("loading class: {}", cb.name);
-				try {
-					loader.loadClass(cb.name);
-				} catch (Exception e) {
-					log.warn("FAIL: load class: {}", cb.name);
-				}
+				//log.info("loading class: {}", cb.name);
 				if (cb.resource) {
-					log.info("CONTINUE: class is resource: {}", cb.name);
+					//log.info("CONTINUE: class is resource: {}", cb.name);
 					continue;
 				}
-				classes.add(loader.loadClass(cb.name));
-				log.info("SUCCESS: loaded class: {}", cb.name);
+				try {
+					// xxx do we want a retry loop like loadBytes?
+					Class<?> loaded = loader.loadClass(cb.name);
+					if (loaded != null && loaded.getSuperclass() != null && loaded.getSuperclass().equals(Plugin.class)) {
+						//log.info("SUCCESS: added class to plugins list: {}", cb.name);
+						classes.add(loaded);
+					}
+					//log.info("SUCCESS: loaded class: {}", cb.name);
+				} catch (Exception | Error e) {
+					log.warn("FAIL: load class: {}", cb.name);
+				}
 			}
 		} catch (Exception e) {
 			log.error("loadUrls failed", e);
@@ -106,6 +114,7 @@ public class HijackedClient {
 	}
 
 	private List<Class<?>> loadBytes(List<Path> jarPaths) {
+		// toLoad is plugins classes for pluginManager to load
 		List<Class<?>> toLoad = new ArrayList<>();
 
 		try {

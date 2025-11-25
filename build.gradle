@@ -34,7 +34,7 @@ dependencies {
 }
 
 group = 'com.aggeplugins'
-version = '1.0.0'
+//version = '1.0.0'
 
 // utf-8 encoding
 tasks.withType(JavaCompile).configureEach {
@@ -43,7 +43,7 @@ tasks.withType(JavaCompile).configureEach {
 
 tasks {
 	shadowJar {
-		archiveBaseName = 'runelite-hijack'
+		archiveBaseName = 'RuneliteHijack'
 		archiveClassifier = ''
 
 		mergeServiceFiles()
