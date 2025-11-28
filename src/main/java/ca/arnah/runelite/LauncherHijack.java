@@ -71,6 +71,14 @@ public class LauncherHijack{
 			Class<?> clazz = Class.forName("net.runelite.launcher.Launcher");
 			clazz.getMethod("main", String[].class).invoke(null, (Object) args);
 		}catch(Exception ignored){
+			System.out.printf("ERROR: LAUNCHER: %s\n", ignored.toString());
+			try {
+				// if no launcher just try client directly
+				Class<?> clazz = Class.forName("net.runelite.client.RuneLite");
+				clazz.getMethod("main", String[].class).invoke(null, (Object)args);
+			} catch (Exception e2) {
+				System.out.printf("ERROR: CLIENT: %s\n", e2.toString());
+			}
 		}
 		System.out.println("Launcher finished");
 	}
