@@ -227,15 +227,25 @@ public class HijackedClient {
 
 		try {
 			for (String path : paths) {
-				Files.createDirectories(RuneLite.RUNELITE_DIR.toPath().resolve(path));
+				Path resolved = RuneLite.RUNELITE_DIR.toPath().resolve(path);
+				if (!Files.exists(resolved)) {
+					Files.createDirectories(resolved);
+					log.info("expected directory created: {}", resolved);
+				} else {
+					log.info("expected directory already exists: {}", resolved);
+				}
 			}
 		} catch (IOException e) {
-			log.error("Files.createDirectories failed on paths: {}", paths);
+			log.error("plugin directory setup failed on paths: {}", paths);
 		}
 
 		try {
 			for (String path : paths) {
-				try (Stream<Path> walkable = Files.walk(RuneLite.RUNELITE_DIR.toPath().resolve(path))) {
+				// FOLLOW SYMLINKS
+				try (Stream<Path> walkable =
+						Files.walk(RuneLite.RUNELITE_DIR.toPath().resolve(path),
+						FileVisitOption.FOLLOW_LINKS)
+					) {
 					walkable.filter(Files::isRegularFile)
 							.filter(f -> f.toString().endsWith(".jar"))
 							.forEach(files::add);
