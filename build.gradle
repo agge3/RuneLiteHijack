@@ -57,8 +57,7 @@ jar {
 
 tasks {
 	shadowJar {
-		// let shadowJar use all
-		//archiveClassifier = 'all'
+		archiveClassifier = 'shaded'
 
 		mergeServiceFiles()
 
