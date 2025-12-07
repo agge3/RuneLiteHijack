@@ -3,6 +3,8 @@ plugins {
 	id 'com.gradleup.shadow' version '9.1.0'
 }
 
+def RELEASE_TARGET = file("${rootProject.rootDir}/build/release")
+
 java {
 	sourceCompatibility = JavaVersion.VERSION_11
 	targetCompatibility = JavaVersion.VERSION_11
@@ -64,7 +66,7 @@ tasks {
 		doLast {
 			copy {
 				from(archiveFile)
-				into("${rootProject.rootDir}/release")
+				into(RELEASE_TARGET)
 			}
 		}
 	}
