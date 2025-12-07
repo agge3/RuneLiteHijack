@@ -12,6 +12,16 @@ java {
 	}
 }
 
+// SOURCE: https://github.com/GradleUp/shadow/issues/644
+// run `shadowJar` task only if that was user's preference, i.e. if user explicitly
+// asked for it by manually specifying it via CLI by specifying that shadowJar
+// task should be ran
+def shadowJarEnabled = gradle.startParameter.taskRequests
+  .find {it.args.find {it.contains("shadowJar")} != null  } != null
+if (!shadowJarEnabled) {
+  gradle.startParameter.excludedTaskNames += "shadowJar"
+}
+
 repositories {
     mavenLocal()
     maven {
@@ -41,9 +51,14 @@ tasks.withType(JavaCompile).configureEach {
     options.encoding = 'UTF-8'
 }
 
+tasks.withType(Jar) {
+	archiveBaseName = 'RuneliteHijack'
+}
+
 tasks {
 	shadowJar {
-		archiveBaseName = 'RuneliteHijack'
+		// respect global above
+		//archiveBaseName = 'RuneliteHijack'
 		archiveClassifier = ''
 
 		mergeServiceFiles()
