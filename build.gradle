@@ -3,6 +3,8 @@ plugins {
 	id 'com.gradleup.shadow' version '9.1.0'
 }
 
+def ARCHIVE_BASE_NAME = 'RuneliteHijack'
+
 java {
 	sourceCompatibility = JavaVersion.VERSION_11
 	targetCompatibility = JavaVersion.VERSION_11
@@ -51,14 +53,13 @@ tasks.withType(JavaCompile).configureEach {
     options.encoding = 'UTF-8'
 }
 
-tasks.withType(Jar) {
-	archiveBaseName = 'RuneliteHijack'
+jar {
+	archiveBaseName = ARCHIVE_BASE_NAME
 }
 
 tasks {
 	shadowJar {
-		// respect global above
-		//archiveBaseName = 'RuneliteHijack'
+		archiveBaseName = ARCHIVE_BASE_NAME
 		archiveClassifier = ''
 
 		mergeServiceFiles()
