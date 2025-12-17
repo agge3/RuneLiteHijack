@@ -1,0 +1,509 @@
+package ca.arnah.runelite;
+
+public class ClassByte {
+	public String name;
+	public byte[] bytes;
+	public boolean resource;
+	public ClassByte(byte[] bytes, String name, boolean resource) {
+		this.name = name;
+		this.bytes = bytes;
+		this.resource = resource;
+	}
+	public ClassByte(byte[] bytes, String name) {
+		this(bytes, name, false);
+	}
+}
+package ca.arnah.runelite;
+
+import net.runelite.client.RuneLite;
+
+/**
+ * @author Arnah
+ * @since Nov 07, 2020
+ */
+public class ClientHijack{
+	
+	public ClientHijack(){
+		System.out.println("Client hijacked");
+		new Thread(()->{
+			while(RuneLite.getInjector() == null){
+				try{
+					Thread.sleep(100);
+				}catch(Exception ex){
+					ex.printStackTrace();
+				}
+			}
+			System.out.println("Injector found");
+			RuneLite.getInjector().getInstance(HijackedClient.class).start();
+		}).start();
+	}
+}package ca.arnah.runelite;
+
+import net.runelite.client.RuneLite;
+import net.runelite.client.config.ConfigManager;
+import net.runelite.client.eventbus.EventBus;
+import net.runelite.client.eventbus.Subscribe;
+import net.runelite.client.events.ConfigChanged;
+import net.runelite.client.ui.SplashScreen;
+import net.runelite.client.plugins.PluginManager;
+import net.runelite.client.events.ExternalPluginsChanged;
+import net.runelite.client.plugins.Plugin;
+import net.runelite.client.plugins.PluginInstantiationException;
+
+import com.google.common.io.ByteStreams;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import javax.inject.Inject;
+import javax.swing.SwingUtilities;
+import java.io.*;
+import java.nio.file.*;
+import java.util.*;
+import java.util.stream.*;
+import java.net.*;
+import java.util.jar.*;
+
+/**
+ * @author Arnah
+ * @since Nov 07, 2020
+ *
+ * @modified agge3, 2025-11-24
+ */
+public class HijackedClient {
+	// no constructor passing - just inject dependency
+	@Inject
+	PluginManager pluginManager;
+	@Inject
+	EventBus eventBus;
+	@Inject
+	ConfigManager configManager;
+
+	Logger log = LoggerFactory.getLogger(HijackedClient.class);
+
+	enum ClassLoaderType {
+		URL,
+		BYTES;
+	}
+
+	private final int sleep;
+	private List<String> paths;
+	private final ClassLoaderType classLoaderType;
+
+	HijackedClient() throws Exception {
+		this.sleep = Integer.parseInt(System.getProperty("HijackedClient.sleep", "100"));
+		this.paths = Arrays.stream(
+					System.getProperty("HijackedClient.paths", "externalplugins,sideloaded-plugins")
+						.split(","))
+				.map(String::trim)
+				.collect(Collectors.toList());
+		this.classLoaderType = ClassLoaderType.valueOf(
+				System.getProperty("HijackedClient.classLoaderType", "URL"));
+
+		log.info("ClassLoaderType: {}", classLoaderType);
+	}
+
+	private List<Class<?>> loadUrls(List<Path> jarPaths) {
+		// classes is plugins classes for pluginManager to load
+		List<Class<?>> classes = new ArrayList<>();
+
+		try {
+			List<ClassByte> cbs = new ArrayList<>();
+			List<URL> urls = new ArrayList<>();
+
+			// filter through jars and add as url + classbyte structure (to get
+			// class names to be loaded)
+			for (Path jarPath : jarPaths) {
+				log.info("parsing jar: {}", jarPath);
+				try {
+					urls.add(jarPath.toUri().toURL());
+					cbs.addAll(listFilesInJar(jarPath));
+				} catch (Exception e) {
+					log.warn("FAIL: parse jar: {}", jarPath);
+				}
+				//log.info("SUCCESS: parsed jar: {}", jarPath);
+			}
+
+			// XXX RESOURCE LEAK: implements Closeable, so should be CLOSED
+			// XXX OK for our use cases, because hijack should live life of JVM
+			// XXX HANDLE CLEANER with cleanup!!!
+			ClassLoader loader = new URLClassLoader(urls.toArray(new URL[0]), getClass().getClassLoader());
+			for (ClassByte cb : cbs) {
+				//log.info("loading class: {}", cb.name);
+				if (cb.resource) {
+					//log.info("CONTINUE: class is resource: {}", cb.name);
+					continue;
+				}
+				try {
+					// xxx do we want a retry loop like loadBytes?
+					Class<?> loaded = loader.loadClass(cb.name);
+					if (loaded != null && loaded.getSuperclass() != null && loaded.getSuperclass().equals(Plugin.class)) {
+						//log.info("SUCCESS: added class to plugins list: {}", cb.name);
+						classes.add(loaded);
+					}
+					//log.info("SUCCESS: loaded class: {}", cb.name);
+				} catch (Exception | Error e) {
+					log.warn("FAIL: load class: {}", cb.name);
+				}
+			}
+		} catch (Exception e) {
+			log.error("loadUrls failed", e);
+		}
+
+		return classes;
+	}
+
+	private List<Class<?>> loadBytes(List<Path> jarPaths) {
+		// toLoad is plugins classes for pluginManager to load
+		List<Class<?>> toLoad = new ArrayList<>();
+
+		try {
+			SimpleClassLoader simpleLoader = new SimpleClassLoader(getClass().getClassLoader());
+
+			// filter through all jars and get (bytes, name, resource)
+			List<ClassByte> classes = new ArrayList<>();
+			for (Path jarPath : jarPaths) {
+				classes.addAll(listFilesInJar(jarPath));
+			}
+
+			int numLoaded = 0;
+			do {
+				numLoaded = 0;
+				for (int i1 = classes.size() - 1; i1 >= 0; i1--) {
+					if (classes.get(i1).resource) {
+						simpleLoader.resources.put(classes.get(i1).name,
+							new ByteArrayInputStream(classes.get(i1).bytes));
+						continue;
+					}
+
+					Class<?> loaded = simpleLoader.loadClass(classes.get(i1).name, classes.get(i1).bytes);
+					if (loaded != null) {
+						numLoaded++;
+						classes.remove(i1);
+					}
+					if (loaded != null && loaded.getSuperclass() != null && loaded.getSuperclass().equals(Plugin.class)) {
+						log.info("Loaded: " + loaded.getName());
+						toLoad.add(loaded);
+					}
+				}
+			} while(numLoaded != 0);
+		} catch (Exception ex) {
+			log.error("loadBytes failed", ex);
+		}
+
+		return toLoad;
+	}
+
+	private void loadPlugins() throws Exception {
+		List<Path> jarPaths = findJars();
+		if (jarPaths.isEmpty()) {
+			log.warn("no external plugins found in paths: {}", paths);
+			// throw EXCEPTION
+		}
+
+		try {
+			List<Class<?>> classes = new ArrayList<>();
+
+			switch (classLoaderType) {
+			case URL:
+	  			classes = loadUrls(jarPaths);
+				break;
+			case BYTES:
+				classes = loadBytes(jarPaths);
+				break;
+			default:
+				throw new IllegalStateException("unknown classloader type: " + classLoaderType);
+			}
+
+			final List<Plugin> loaded = pluginManager.loadPlugins(classes, null)
+				.stream().filter(Objects::nonNull).collect(Collectors.toList());
+
+			SwingUtilities.invokeAndWait(() -> {
+				try {
+					for (Plugin plugin : loaded) {
+						pluginManager.loadDefaultPluginConfiguration(Collections.singleton(plugin));
+						pluginManager.startPlugin(plugin);
+						log.info("started plugin: {}", plugin.getClass().getSimpleName());
+					}
+				} catch (PluginInstantiationException e) {
+					log.error("failed to instantiate external plugins", e);
+				}
+				eventBus.post(new ExternalPluginsChanged());
+			});
+		} catch (Exception e) {
+			log.info("failed to load plugins", e);
+			throw e;
+		}
+	}
+
+	public void start() {
+		// xxx do we need?
+		eventBus.register(this);
+
+		log.info("STARTED");
+
+		new Thread(()-> {
+			while (SplashScreen.isOpen()) {
+				try {
+					Thread.sleep(sleep);
+				} catch (Exception ex) {
+					ex.printStackTrace();
+				}
+			}
+
+			log.info("Splash Screen done");
+
+			try {
+				loadPlugins();
+			} catch (Exception ex) {
+				log.error("failed to load external plugins", ex);
+			}
+		}).start();
+	}
+
+	public List<Path> findJars()
+	{
+		List<Path> files = new ArrayList<>();
+
+		try {
+			for (String path : paths) {
+				Files.createDirectories(RuneLite.RUNELITE_DIR.toPath().resolve(path));
+			}
+		} catch (IOException e) {
+			log.error("Files.createDirectories failed on paths: {}", paths);
+		}
+
+		try {
+			for (String path : paths) {
+				try (Stream<Path> walkable = Files.walk(RuneLite.RUNELITE_DIR.toPath().resolve(path))) {
+					walkable.filter(Files::isRegularFile)
+							.filter(f -> f.toString().endsWith(".jar"))
+							.forEach(files::add);
+				}
+			}
+		} catch (Exception ex) {
+			ex.printStackTrace();
+		}
+
+		return files;
+	}
+
+	public List<ClassByte> listFilesInJar(Path jarPath)
+	{
+		List<ClassByte> classes = new ArrayList<>();
+		try (JarFile jarFile1 = new JarFile(jarPath.toFile()))
+		{
+			jarFile1.stream().forEach(jarEntry ->
+			{
+				if (jarEntry == null || jarEntry.isDirectory()) {
+					return;
+				}
+				if(!jarEntry.getName().endsWith(".class")) {
+					try (InputStream inputStream = jarFile1.getInputStream(jarEntry)) {
+						classes.add(new ClassByte(ByteStreams.toByteArray(inputStream),
+								jarEntry.getName(), true));
+						// xxx is the byte stream good now?
+					} catch (IOException ioException) {
+						log.error("Could not obtain resource entry for " + jarEntry.getName());
+					}
+					return;
+				}
+				try (InputStream inputStream = jarFile1.getInputStream(jarEntry)) {
+					classes.add(new ClassByte(ByteStreams.toByteArray(inputStream),
+							jarEntry.getName().replace('/', '.').substring(0,
+									jarEntry.getName().length() - 6)));
+				} catch (IOException ioException)
+				{
+					log.warn("Could not obtain class entry for {}", jarEntry.getName());
+				}
+			});
+		}
+		catch (Exception ex)
+		{
+			ex.printStackTrace();
+		}
+		return classes;
+	}
+}
+package ca.arnah.runelite;
+
+
+import java.lang.reflect.Method;
+import java.net.URI;
+import java.net.URL;
+import java.net.URLClassLoader;
+import javax.swing.UIManager;
+
+/**
+ * @author Arnah
+ * @since Nov 07, 2020
+ */
+public class LauncherHijack{
+
+	public LauncherHijack(){
+		new Thread(()->{
+			// First we need to grab the ClassLoader the launcher uses to launch the client.
+			ClassLoader objClassLoader;
+			loop:
+			while(true){
+				objClassLoader = (ClassLoader) UIManager.get("ClassLoader");
+				if(objClassLoader != null){
+					for(Package pack : objClassLoader.getDefinedPackages()){
+						if(pack.getName().equals("net.runelite.client.rs")){
+							break loop;
+						}
+					}
+				}
+				try{
+					Thread.sleep(100);
+				}catch(Exception ex){
+					ex.printStackTrace();
+				}
+			}
+			System.out.println("Classloader found");
+			try{
+				URLClassLoader classLoader = (URLClassLoader) objClassLoader;
+
+				// Add our hijack client to the classloader
+				Method addUrl = URLClassLoader.class.getDeclaredMethod("addURL", URL.class);
+				addUrl.setAccessible(true);
+
+				URI uri = LauncherHijack.class.getProtectionDomain().getCodeSource().getLocation().toURI();
+				if(uri.getPath().endsWith("classes/")){// Intellij
+					uri = uri.resolve("..");
+				}
+				if(!uri.getPath().endsWith(".jar")){
+					uri = uri.resolve("RuneLiteHijack.jar");
+				}
+				addUrl.invoke(classLoader, uri.toURL());
+				System.out.println(uri.getPath());
+
+				// Execute our code inside the runelite client classloader
+				Class<?> clazz = classLoader.loadClass(ClientHijack.class.getName());
+				clazz.getConstructor().newInstance();
+			}catch(Exception ex){
+				ex.printStackTrace();
+			}
+		}).start();
+	}
+
+	public static void main(String[] args){
+		// Force disable the "JVMLauncher", was just easiest way to do what I wanted at the time.
+		System.setProperty("runelite.launcher.nojvm", "true");
+		// Was renamed in https://github.com/runelite/launcher/commit/9086bb5539fce6ccdea148b03ff05efde21e675e
+		System.setProperty("runelite.launcher.reflect", "true");
+		new LauncherHijack();
+		// Launcher.main(args);
+		try{
+			Class<?> clazz = Class.forName("net.runelite.launcher.Launcher");
+			clazz.getMethod("main", String[].class).invoke(null, (Object) args);
+		}catch(Exception ignored){
+			System.out.printf("ERROR: LAUNCHER: %s\n", ignored.toString());
+			try {
+				// if no launcher just try client directly
+				Class<?> clazz = Class.forName("net.runelite.client.RuneLite");
+				clazz.getMethod("main", String[].class).invoke(null, (Object)args);
+			} catch (Exception e2) {
+				System.out.printf("ERROR: CLIENT: %s\n", e2.toString());
+			}
+		}
+		System.out.println("Launcher finished");
+	}
+}
+package ca.arnah.runelite;
+
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.net.MalformedURLException;
+import java.net.URL;
+import java.net.URLConnection;
+import java.net.URLStreamHandler;
+import java.security.AllPermission;
+import java.security.PermissionCollection;
+import java.security.Permissions;
+import java.security.ProtectionDomain;
+import java.util.HashMap;
+
+public class SimpleClassLoader extends ClassLoader
+{
+	public HashMap<String, InputStream> resources = new HashMap<>();
+	public SimpleClassLoader(ClassLoader parent)
+	{
+		super(parent);
+	}
+
+	public Class<?> loadClass(String name, byte[] bytes)
+	{
+		try
+		{
+			return this.getParent().loadClass(name);
+		}
+		catch (ClassNotFoundException | NoClassDefFoundError e)
+		{
+			return lookupClass(name, bytes);
+		}
+	}
+	@Override
+	public InputStream getResourceAsStream(String name)
+	{
+		if (resources.containsKey(name)) {
+			return resources.get(name);
+		}
+		return super.getResourceAsStream(name);
+	}
+
+	@Override
+	public URL getResource(String name) {
+	    if (resources.containsKey(name)) {
+	        try {
+	            return new URL("x-buffer", null, -1, name, new URLStreamHandler() {
+	                protected URLConnection openConnection(URL u) {
+	                    return new URLConnection(u) {
+	                        public void connect() {}
+	                        public InputStream getInputStream() {
+	                            return resources.get(name);
+	                        }
+	                    };
+	                }
+	            });
+	        } catch (MalformedURLException e) {
+				throw new RuntimeException(e);
+			}
+	    }
+	    return super.getResource(name);
+	}
+
+	public Class lookupClass(String name, byte[] bytes)
+	{
+		Permissions perms = new Permissions();
+		perms.add(new AllPermission());
+		final ProtectionDomain protDomain =
+				new ProtectionDomain(getClass().getProtectionDomain().getCodeSource(), perms,
+						this,
+						getClass().getProtectionDomain().getPrincipals());
+
+		try
+		{
+			return defineClass(name, bytes, 0, bytes.length, protDomain);
+		}
+		catch (ClassFormatError | NoClassDefFoundError | VerifyError ex)
+		{
+			return null;
+		}
+		catch (LinkageError ex)
+		{
+			return null;
+		}
+	}
+	public static byte[] getBytes(InputStream is) throws IOException
+	{
+		try (ByteArrayOutputStream os = new ByteArrayOutputStream();)
+		{
+			byte[] buffer = new byte[0xFFFF];
+			for (int len; (len = is.read(buffer)) != -1;)
+				os.write(buffer, 0, len);
+			os.flush();
+			return os.toByteArray();
+		}
+	}
+}
